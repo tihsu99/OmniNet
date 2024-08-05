@@ -1,15 +1,13 @@
-import torch
-from torch import nn, Tensor
+import tensorflow as tf
 
-
-class PositionEmbedding(nn.Module):
+class PositionEmbedding(tf.keras.layers.Layer):
     def __init__(self, embedding_dim: int):
         super(PositionEmbedding, self).__init__()
+        self.position_embedding = tf.Variable(tf.random.normal([1, 1, embedding_dim]), trainable=True)
 
-        self.position_embedding = nn.Parameter(torch.randn(1, 1, embedding_dim))
+    def call(self, current_embeddings: tf.Tensor) -> tf.Tensor:
+        num_vectors, batch_size, input_dim = tf.shape(current_embeddings)
 
-    def forward(self, current_embeddings: Tensor) -> Tensor:
-        num_vectors, batch_size, input_dim = current_embeddings.shape
+        position_embedding = tf.tile(self.position_embedding, [num_vectors, batch_size, 1])
+        return tf.concat([current_embeddings, position_embedding], axis=2)
 
-        position_embedding = self.position_embedding.expand(num_vectors, batch_size, -1)
-        return torch.cat((current_embeddings, position_embedding), dim=2)

@@ -1,17 +1,18 @@
 from typing import Tuple
 
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.network.layers.embedding.sequential_vector_embedding import SequentialVectorEmbedding
 from spanet.options import Options
 
 
-class GlobalVectorEmbedding(nn.Module):
+class GlobalVectorEmbedding(tf.keras.Model):
     def __init__(self, options: Options, input_dim: int):
         super(GlobalVectorEmbedding, self).__init__()
         self.embedding = SequentialVectorEmbedding(options, input_dim)
 
-    def forward(self, vectors: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    def call(self, vectors: tf.Tensor, mask: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
         """ Embed event-level global vectors into the same latent space as the sequential inputs.
 
         Parameters
@@ -35,3 +36,5 @@ class GlobalVectorEmbedding(nn.Module):
         embeddings, padding_mask, sequence_mask, global_mask = self.embedding(vectors, mask)
 
         return embeddings, padding_mask, sequence_mask, ~global_mask
+
+

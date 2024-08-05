@@ -1,22 +1,14 @@
 from typing import Type
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.layers.branch_linear import BranchLinear
-from spanet.dataset.regressions import Regression, regression_class
+from spanet.dataset.regressions import Regression
 
-
-class NormalizedBranchLinear(nn.Module):
-    __constants__ = ['hidden_dim', 'num_layers', "num_outputs"]
-
-    def __init__(
-            self,
-            options: Options,
-            num_layers: int,
-            regression: Type[Regression],
-            mean: Tensor,
-            std: Tensor
-    ):
+class NormalizedBranchLinear(tf.keras.Model):
+    def __init__(self, options: Options, num_layers: int, regression: Type[Regression], mean: tf.Tensor, std: tf.Tensor):
         super(NormalizedBranchLinear, self).__init__()
 
         self.hidden_dim = options.hidden_dim
@@ -24,15 +16,15 @@ class NormalizedBranchLinear(nn.Module):
         self.num_layers = num_layers
 
         self.regression = regression
-        self.mean = nn.Parameter(mean, requires_grad=False)
-        self.std = nn.Parameter(std, requires_grad=False)
+        self.mean = tf.Variable(mean, trainable=False)
+        self.std = tf.Variable(std, trainable=False)
         self.linear = BranchLinear(
             options,
             self.num_layers,
             self.num_outputs
         )
 
-    def forward(self, vector: Tensor) -> Tensor:
+    def call(self, vector: tf.Tensor) -> tf.Tensor:
         """ Produce a single classification output for a sequence of vectors.
 
         Parameters
@@ -45,4 +37,7 @@ class NormalizedBranchLinear(nn.Module):
         classification: [B, O]
             Probability of this particle existing in the data.
         """
-        return self.regression.denormalize(self.linear(vector), self.mean, self.std)
+        normalized_output = self.linear(vector)
+        return self.regression.denormalize(normalized_output, self.mean, self.std)
+
+

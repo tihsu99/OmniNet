@@ -1,5 +1,4 @@
-import torch
-from torch import Tensor
+import tensorflow as tf
 
 from spanet.dataset.regressions.base_regression import Regression, Statistics
 
@@ -10,12 +9,13 @@ class GaussianRegression(Regression):
         return "gaussian"
 
     @staticmethod
-    def statistics(data: Tensor) -> Statistics:
-        mean = torch.nanmean(data)
-        std = torch.sqrt(torch.nanmean(torch.square(data)) - torch.square(mean))
+    def statistics(data: tf.Tensor) -> Statistics:
+        mean = tf.reduce_mean(tf.boolean_mask(data, ~tf.math.is_nan(data)))
+        std = tf.sqrt(tf.reduce_mean(tf.square(tf.boolean_mask(data, ~tf.math.is_nan(data)))) - tf.square(mean))
 
         return Statistics(mean, std)
 
     @staticmethod
-    def loss(predictions: Tensor, targets: Tensor, mean: Tensor, std: Tensor) -> Tensor:
-        return torch.square((predictions - targets) / std)
+    def loss(predictions: tf.Tensor, targets: tf.Tensor, mean: tf.Tensor, std: tf.Tensor) -> tf.Tensor:
+        return tf.square((predictions - targets) / std)
+

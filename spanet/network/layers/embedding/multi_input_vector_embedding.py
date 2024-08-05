@@ -1,7 +1,7 @@
 from typing import List, Tuple
 
-import torch
-from torch import nn, Tensor
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.dataset.jet_reconstruction_dataset import JetReconstructionDataset
@@ -10,15 +10,15 @@ from spanet.network.layers.linear_block import create_linear_block
 from spanet.network.layers.embedding.combined_vector_embedding import CombinedVectorEmbedding
 
 
-class MultiInputVectorEmbedding(nn.Module):
+class MultiInputVectorEmbedding(tf.keras.Model):
     def __init__(self, options: Options, training_dataset: JetReconstructionDataset):
         super(MultiInputVectorEmbedding, self).__init__()
 
         # Primary embedding blocks to convert each input type into an identically shaped vector.
-        self.vector_embedding_layers = nn.ModuleList([
+        self.vector_embedding_layers = [
             CombinedVectorEmbedding(options, training_dataset, input_name, input_type)
             for input_name, input_type in training_dataset.event_info.input_types.items()
-        ])
+        ]
 
         # A final embedding layer to convert the position encoded vectors into a unified vector space.
         self.final_embedding_layer = create_linear_block(
@@ -28,7 +28,7 @@ class MultiInputVectorEmbedding(nn.Module):
             options.skip_connections
         )
 
-    def forward(self, sources: List[Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    def call(self, sources: List[Tuple[tf.Tensor, tf.Tensor]]) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
         """
 
         Parameters
@@ -39,7 +39,7 @@ class MultiInputVectorEmbedding(nn.Module):
         Returns
         -------
         embeddings: [T, B, D]
-            Complete embeddings groups together in order of their inputs and in the proper latent dimension.
+            Complete embeddings grouped together in order of their inputs and in the proper latent dimension.
         padding_mask: [B, T]
             Negative mask indicating that a jet is padding for transformer.
         sequence_mask: [T, B, 1]
@@ -64,11 +64,13 @@ class MultiInputVectorEmbedding(nn.Module):
             sequence_masks.append(current_embeddings[2])
             global_masks.append(current_embeddings[3])
 
-        embeddings = torch.cat(embeddings, dim=0)
-        padding_masks = torch.cat(padding_masks, dim=1)
-        sequence_masks = torch.cat(sequence_masks, dim=0)
-        global_masks = torch.cat(global_masks, dim=0)
+        embeddings = tf.concat(embeddings, axis=0)
+        padding_masks = tf.concat(padding_masks, axis=1)
+        sequence_masks = tf.concat(sequence_masks, axis=0)
+        global_masks = tf.concat(global_masks, axis=0)
 
-        embeddings = self.final_embedding_layer(embeddings, sequence_masks)
+        embeddings = self.final_embedding_layer([embeddings, sequence_masks])
 
         return embeddings, padding_masks, sequence_masks, global_masks
+
+

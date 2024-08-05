@@ -2,7 +2,7 @@ from typing import Dict, Callable
 import warnings
 
 import numpy as np
-import torch
+import tensorflow as tf
 
 from sklearn import metrics as sk_metrics
 
@@ -33,14 +33,11 @@ class JetReconstructionValidation(JetReconstructionNetwork):
         }
 
     def compute_metrics(self, jet_predictions, particle_scores, stacked_targets, stacked_masks):
-        event_permutation_group = self.event_permutation_tensor.cpu().numpy()
+        event_permutation_group = self.event_permutation_tensor.numpy()
         num_permutations = len(event_permutation_group)
         num_targets, batch_size = stacked_masks.shape
         particle_predictions = particle_scores >= 0.5
 
-        # Compute all possible target permutations and take the best performing permutation
-        # First compute raw_old accuracy so that we can get an accuracy score for each event
-        # This will also act as the method for choosing the best permutation to compare for the other metrics.
         jet_accuracies = np.zeros((num_permutations, num_targets, batch_size), dtype=bool)
         particle_accuracies = np.zeros((num_permutations, num_targets, batch_size), dtype=bool)
         for i, permutation in enumerate(event_permutation_group):
@@ -52,17 +49,14 @@ class JetReconstructionValidation(JetReconstructionNetwork):
         jet_accuracies = jet_accuracies.sum(1)
         particle_accuracies = particle_accuracies.sum(1)
 
-        # Select the primary permutation which we will use for all other metrics.
-        chosen_permutations = self.event_permutation_tensor[jet_accuracies.argmax(0)].T
-        chosen_permutations = chosen_permutations.cpu()
-        permuted_masks = torch.gather(torch.from_numpy(stacked_masks), 0, chosen_permutations).numpy()
+        chosen_permutations = tf.gather(self.event_permutation_tensor, tf.argmax(jet_accuracies, axis=0), axis=0)
+        chosen_permutations = chosen_permutations.numpy().T
+        permuted_masks = tf.gather(tf.convert_to_tensor(stacked_masks), chosen_permutations).numpy()
 
-        # Compute final accuracy vectors for output
         num_particles = stacked_masks.sum(0)
         jet_accuracies = jet_accuracies.max(0)
         particle_accuracies = particle_accuracies.max(0)
 
-        # Create the logging dictionaries
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
     
@@ -84,40 +78,35 @@ class JetReconstructionValidation(JetReconstructionNetwork):
         for name, metric in self.particle_score_metrics.items():
             metrics[f"particle/{name}"] = metric(particle_targets, particle_scores)
 
-        # Compute the sum accuracy of all complete events to act as our target for
-        # early stopping, hyperparameter optimization, learning rate scheduling, etc.
         metrics["validation_accuracy"] = metrics[f"jet/accuracy_{num_targets}_of_{num_targets}"]
 
         return metrics
 
     def validation_step(self, batch, batch_idx) -> Dict[str, np.float32]:
-        # Run the base prediction step
         sources, num_jets, targets, regression_targets, classification_targets = batch
         jet_predictions, particle_scores, regressions, classifications = self.predict(sources)
 
         batch_size = num_jets.shape[0]
         num_targets = len(targets)
 
-        # Stack all of the targets into single array, we will also move to numpy for easier the numba computations.
         stacked_targets = np.zeros(num_targets, dtype=object)
         stacked_masks = np.zeros((num_targets, batch_size), dtype=bool)
         for i, (target, mask) in enumerate(targets):
-            stacked_targets[i] = target.detach().cpu().numpy()
-            stacked_masks[i] = mask.detach().cpu().numpy()
+            stacked_targets[i] = target.numpy()
+            stacked_masks[i] = mask.numpy()
 
         regression_targets = {
-            key: value.detach().cpu().numpy()
+            key: value.numpy()
             for key, value in regression_targets.items()
         }
 
         classification_targets = {
-            key: value.detach().cpu().numpy()
+            key: value.numpy()
             for key, value in classification_targets.items()
         }
 
         metrics = self.evaluator.full_report_string(jet_predictions, stacked_targets, stacked_masks, prefix="Purity/")
 
-        # Apply permutation groups for each target
         for target, prediction, decoder in zip(stacked_targets, jet_predictions, self.branch_decoders):
             for indices in decoder.permutation_indices:
                 if len(indices) > 1:
@@ -130,26 +119,27 @@ class JetReconstructionValidation(JetReconstructionNetwork):
             delta = regressions[key] - regression_targets[key]
             
             percent_error = np.abs(delta / regression_targets[key])
-            self.log(f"REGRESSION/{key}_percent_error", percent_error.mean(), sync_dist=True)
+            self.log(f"REGRESSION/{key}_percent_error", percent_error.mean())
 
             absolute_error = np.abs(delta)
-            self.log(f"REGRESSION/{key}_absolute_error", absolute_error.mean(), sync_dist=True)
+            self.log(f"REGRESSION/{key}_absolute_error", absolute_error.mean())
 
             percent_deviation = delta / regression_targets[key]
-            self.logger.experiment.add_histogram(f"REGRESSION/{key}_percent_deviation", percent_deviation, self.global_step)
+            tf.summary.histogram(f"REGRESSION/{key}_percent_deviation", percent_deviation, step=self.optimizer.iterations)
 
             absolute_deviation = delta
-            self.logger.experiment.add_histogram(f"REGRESSION/{key}_absolute_deviation", absolute_deviation, self.global_step)
+            tf.summary.histogram(f"REGRESSION/{key}_absolute_deviation", absolute_deviation, step=self.optimizer.iterations)
 
         for key in classifications:
             accuracy = (classifications[key] == classification_targets[key])
-            self.log(f"CLASSIFICATION/{key}_accuracy", accuracy.mean(), sync_dist=True)
+            self.log(f"CLASSIFICATION/{key}_accuracy", accuracy.mean())
 
         for name, value in metrics.items():
             if not np.isnan(value):
-                self.log(name, value, sync_dist=True)
+                self.log(name, value)
 
         return metrics
 
     def test_step(self, batch, batch_idx):
         return self.validation_step(batch, batch_idx)
+

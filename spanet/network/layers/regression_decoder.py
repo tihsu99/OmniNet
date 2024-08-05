@@ -1,7 +1,8 @@
 from typing import Dict
 from collections import OrderedDict
 
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.dataset.regressions import regression_class
@@ -9,9 +10,7 @@ from spanet.network.layers.branch_linear import NormalizedBranchLinear
 from spanet.dataset.jet_reconstruction_dataset import JetReconstructionDataset
 
 
-class RegressionDecoder(nn.Module):
-    __constants__ = ['hidden_dim', 'num_layers']
-
+class RegressionDecoder(tf.keras.layers.Layer):
     def __init__(self, options: Options, training_dataset: JetReconstructionDataset):
         super(RegressionDecoder, self).__init__()
 
@@ -19,7 +18,6 @@ class RegressionDecoder(nn.Module):
         means, stds = training_dataset.compute_regression_statistics()
 
         # A unique linear decoder for each possible regression.
-        # TODO make these non-unique for symmetric indices.
         networks = OrderedDict()
         for name, data in training_dataset.regressions.items():
             if data is None:
@@ -33,14 +31,16 @@ class RegressionDecoder(nn.Module):
                 stds[name]
             )
 
-        self.networks = nn.ModuleDict(networks)
+        self.networks = {name: network for name, network in networks.items()}
 
-    def forward(self, vectors: Dict[str, Tensor]) -> Dict[str, Tensor]:
-
+    def call(self, vectors: Dict[str, tf.Tensor]) -> Dict[str, tf.Tensor]:
         # vectors: Dict with mapping name -> [B, D]
         # outputs: Dict with mapping name -> [B, O_name]
 
         return {
-            key: network(vectors['/'.join(key.split('/')[:-1])]).view(-1)
+            key: tf.reshape(network(vectors['/'.join(key.split('/')[:-1])]), [-1])
             for key, network in self.networks.items()
         }
+
+# Ensure that the NormalizedBranchLinear class is translated to TensorFlow as well.
+

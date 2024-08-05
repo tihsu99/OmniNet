@@ -1,13 +1,14 @@
-from torch import nn, Tensor
+import tensorflow as tf
+from tensorflow.keras import layers
 
-
-class Normalizer(nn.Module):
-    def __init__(self, mean: Tensor, std: Tensor):
+class Normalizer(tf.keras.layers.Layer):
+    def __init__(self, mean: tf.Tensor, std: tf.Tensor):
         super(Normalizer, self).__init__()
+        self.mean = tf.Variable(mean, trainable=False)
+        self.std = tf.Variable(std, trainable=False)
 
-        self.mean = nn.Parameter(mean, requires_grad=False)
-        self.std = nn.Parameter(std, requires_grad=False)
-
-    def forward(self, data: Tensor, mask: Tensor) -> Tensor:
+    def call(self, data: tf.Tensor, mask: tf.Tensor) -> tf.Tensor:
         data = (data - self.mean) / self.std
-        return data * mask.unsqueeze(-1)
+        return data * tf.expand_dims(mask, axis=-1)
+
+

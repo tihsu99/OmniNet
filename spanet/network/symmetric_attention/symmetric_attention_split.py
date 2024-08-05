@@ -2,8 +2,8 @@ from itertools import islice
 from typing import List, Tuple
 
 import numpy as np
-import torch
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers, Model
 
 from spanet.options import Options
 from spanet.network.layers.stacked_encoder import StackedEncoder
@@ -28,23 +28,16 @@ class SymmetricAttentionSplit(SymmetricAttentionBase):
         )
 
         # Each potential jet gets its own encoder in order to extract information for attention.
-        self.encoders = nn.ModuleList([
-            StackedEncoder(
-                options,
-                options.num_jet_embedding_layers,
-                options.num_jet_encoder_layers
-            )
-            for _ in range(degree)
-        ])
+        self.encoders = [StackedEncoder(
+            options,
+            options.num_jet_embedding_layers,
+            options.num_jet_encoder_layers
+        ) for _ in range(degree)]
 
         # After encoding, the jets are fed into a final linear layer to extract logits.
-        # TODO Play around with bias
-        self.linear_layers = nn.ModuleList([
-            nn.Linear(options.hidden_dim, self.attention_dim, bias=True)
-            for _ in range(degree)
-        ])
+        self.linear_layers = [layers.Dense(self.attention_dim, use_bias=True) for _ in range(degree)]
 
-        # Mask the vectors before applying attentino operation.
+        # Mask the vectors before applying attention operation.
         self.masking = create_masking(options.masking)
 
         # This layer ensures symmetric output by symmetrizing the OUTPUT tensor.
@@ -57,9 +50,10 @@ class SymmetricAttentionSplit(SymmetricAttentionBase):
 
     def reset_parameters(self):
         r"""Initiate parameters in the transformer model."""
-        for p in self.linear_layers.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+        for layer in self.linear_layers:
+            if len(layer.kernel.shape) > 1:
+                initializer = tf.keras.initializers.GlorotUniform()
+                layer.kernel.assign(initializer(layer.kernel.shape))
 
     def make_contraction(self):
         input_index_names = np.array(list(self.INPUT_INDEX_NAMES))
@@ -71,7 +65,7 @@ class SymmetricAttentionSplit(SymmetricAttentionBase):
 
         return operations + result
 
-    def forward(self, x: Tensor, padding_mask: Tensor, sequence_mask: Tensor) -> Tuple[Tensor, List[Tensor]]:
+    def call(self, x: tf.Tensor, padding_mask: tf.Tensor, sequence_mask: tf.Tensor) -> Tuple[tf.Tensor, List[tf.Tensor]]:
         """ Perform symmetric attention on the hidden vectors and produce the output logits.
 
         This is the approximate version which learns embedding layers and computes a trivial linear form.
@@ -118,7 +112,7 @@ class SymmetricAttentionSplit(SymmetricAttentionBase):
         # Construct the output logits via general self-attention.
         # output: [T, T, ...]
         # -------------------------------------------------------
-        output = torch.einsum(self.contraction_operation, *ys)
+        output = tf.einsum(self.contraction_operation, *ys)
         output = output / self.weights_scale
 
         # ---------------------------------------------------
@@ -129,3 +123,4 @@ class SymmetricAttentionSplit(SymmetricAttentionBase):
         output = self.symmetrize_tensor(output)
 
         return output, daughter_vectors
+

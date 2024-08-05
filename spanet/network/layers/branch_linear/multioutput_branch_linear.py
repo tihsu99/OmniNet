@@ -1,19 +1,13 @@
 from typing import List
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.layers.branch_linear import BranchLinear
 
-
-class MultiOutputBranchLinear(nn.Module):
-    __constants__ = ['hidden_dim', 'num_layers']
-
-    def __init__(
-            self,
-            options: Options,
-            num_layers: int,
-            num_outputs: Tensor
-    ):
+class MultiOutputBranchLinear(tf.keras.Model):
+    def __init__(self, options, num_layers: int, num_outputs: tf.Tensor):
         super(MultiOutputBranchLinear, self).__init__()
 
         self.hidden_dim = options.hidden_dim
@@ -26,27 +20,14 @@ class MultiOutputBranchLinear(nn.Module):
             batch_norm=False
         )
 
-        self.output_layers = nn.ModuleList(
-            BranchLinear(options, 1, output_dim.item())
+        self.output_layers = [
+            BranchLinear(options, 1, int(output_dim))
             for output_dim in num_outputs
-        )
+        ]
 
-    def forward(self, vector: Tensor) -> List[Tensor]:
-        """ Produce a single classification output for a sequence of vectors.
-
-        Parameters
-        ----------
-        vector : [B, D]
-            Hidden activations after central encoder.
-
-        Returns
-        -------
-        classification: [B, O]
-            Probability of this particle existing in the data.
-        """
+    def call(self, vector: tf.Tensor) -> List[tf.Tensor]:
         vector = self.shared_layers(vector)
 
-        return [
-            output_layer(vector)
-            for output_layer in self.output_layers
-        ]
+        return [output_layer(vector) for output_layer in self.output_layers]
+
+

@@ -1,4 +1,5 @@
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.layers.linear_block.masking import create_masking
@@ -10,17 +11,19 @@ class StandardTransformer(TransformerBase):
         super(StandardTransformer, self).__init__(options, num_layers)
 
         self.masking = create_masking(options.masking)
-        self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                self.hidden_dim,
-                self.num_heads,
-                self.dim_feedforward,
-                self.dropout,
-                self.transformer_activation
-            ),
-            num_layers
-        )
+        self.transformer_layers = [
+            layers.TransformerEncoderLayer(
+                d_model=self.hidden_dim,
+                num_heads=self.num_heads,
+                feed_forward_dim=self.dim_feedforward,
+                dropout=self.dropout,
+                activation=self.transformer_activation
+            ) for _ in range(num_layers)
+        ]
+        self.transformer = layers.TransformerEncoder(self.transformer_layers)
 
-    def forward(self, x: Tensor, padding_mask: Tensor, sequence_mask: Tensor) -> Tensor:
-        output = self.transformer(x, src_key_padding_mask=padding_mask)
+    def call(self, x: tf.Tensor, padding_mask: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
+        padding_mask = tf.cast(tf.expand_dims(tf.logical_not(padding_mask), axis=1), dtype=tf.int32)
+        output = self.transformer(x, mask=padding_mask)
         return self.masking(output, sequence_mask)
+

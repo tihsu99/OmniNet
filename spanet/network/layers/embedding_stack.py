@@ -1,30 +1,28 @@
 from typing import List
 
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.layers.linear_block.basic_block import BasicBlock
 from spanet.network.layers.linear_block import create_linear_block
 
 
-class EmbeddingStack(nn.Module):
-    __constants__ = ["input_dim"]
-
+class EmbeddingStack(tf.keras.layers.Layer):
     def __init__(self, options: Options, input_dim: int):
         super(EmbeddingStack, self).__init__()
 
         self.input_dim = input_dim
-        self.embedding_layers = nn.ModuleList(self.create_embedding_layers(options, input_dim))
+        self.embedding_layers = [self.create_embedding_layers(options, input_dim)]
 
     @staticmethod
-    def create_embedding_layers(options: Options, input_dim: int) -> List[BasicBlock]:
-        """ Create a stack of linear layer with increasing hidden dimensions.
+    def create_embedding_layers(options: Options, input_dim: int) -> List[layers.Layer]:
+        """ Create a stack of linear layers with increasing hidden dimensions.
 
         Each hidden layer will have double the dimensions as the previous, beginning with the
         size of the feature-space and ending with the hidden_dim specified in options.
         """
 
-        # Initial embedding layer to just project to our shared first dimension.
         embedding_layers = [create_linear_block(
             options,
             input_dim,
@@ -57,7 +55,7 @@ class EmbeddingStack(nn.Module):
 
         return embedding_layers
 
-    def forward(self, vectors: Tensor, sequence_mask: Tensor) -> Tensor:
+    def call(self, vectors: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
         """ Embed a sequence of vectors through a series of doubling linear layers.
 
         Parameters
@@ -79,3 +77,6 @@ class EmbeddingStack(nn.Module):
             embeddings = layer(embeddings, sequence_mask)
 
         return embeddings
+
+# Ensure that the create_linear_block function is compatible with TensorFlow and has appropriate implementations.
+

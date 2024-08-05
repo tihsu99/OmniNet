@@ -1,69 +1,62 @@
 from typing import List
-
-import torch
-from torch import Tensor
+import tensorflow as tf
 
 
-@torch.jit.script
-def contract_4d(weights: Tensor, x: Tensor) -> Tensor:
-    factor = torch.sqrt(weights.shape[0])
-    y = torch.einsum('ijkl,bxi->jklbx', weights, x) / factor
-    y = torch.einsum('jklbx,byj->klbxy', y, x) / factor
-    y = torch.einsum('klbxy,bzk->lbxyz', y, x) / factor
-    y = torch.einsum('lbxyz,bwl->bxyzw', y, x) / factor
+@tf.function
+def contract_4d(weights: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
+    factor = tf.sqrt(tf.cast(tf.shape(weights)[0], tf.float32))
+    y = tf.einsum('ijkl,bxi->jklbx', weights, x) / factor
+    y = tf.einsum('jklbx,byj->klbxy', y, x) / factor
+    y = tf.einsum('klbxy,bzk->lbxyz', y, x) / factor
+    y = tf.einsum('lbxyz,bwl->bxyzw', y, x) / factor
 
     return y
 
 
-@torch.jit.script
-def contract_3d(weights: Tensor, x: Tensor) -> Tensor:
-    factor = torch.sqrt(weights.shape[0])
-    y = torch.einsum('ijk,bxi->jkbx', weights, x) / factor
-    y = torch.einsum('jkbx,byj->kbxy', y, x) / factor
-    y = torch.einsum('kbxy,bzk->bxyz', y, x) / factor
+@tf.function
+def contract_3d(weights: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
+    factor = tf.sqrt(tf.cast(tf.shape(weights)[0], tf.float32))
+    y = tf.einsum('ijk,bxi->jkbx', weights, x) / factor
+    y = tf.einsum('jkbx,byj->kbxy', y, x) / factor
+    y = tf.einsum('kbxy,bzk->bxyz', y, x) / factor
     return y
 
 
-@torch.jit.script
-def contract_2d(weights: Tensor, x: Tensor) -> Tensor:
-    factor = torch.sqrt(weights.shape[0])
-    y = torch.einsum('ij,bxi->jbx', weights, x) / factor
-    y = torch.einsum('jbx,byj->bxy', y, x) / factor
+@tf.function
+def contract_2d(weights: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
+    factor = tf.sqrt(tf.cast(tf.shape(weights)[0], tf.float32))
+    y = tf.einsum('ij,bxi->jbx', weights, x) / factor
+    y = tf.einsum('jbx,byj->bxy', y, x) / factor
     return y
 
 
-@torch.jit.script
-def contract_1d(weights: Tensor, x: Tensor) -> Tensor:
-    factor = torch.sqrt(weights.shape[0])
-    y = torch.einsum('i,bxi->bx', weights, x) / factor
+@tf.function
+def contract_1d(weights: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
+    factor = tf.sqrt(tf.cast(tf.shape(weights)[0], tf.float32))
+    y = tf.einsum('i,bxi->bx', weights, x) / factor
     return y
 
 
-@torch.jit.script
-def contract_linear_form(weights: Tensor, x: Tensor) -> Tensor:
-    if weights.ndim == 4:
+@tf.function
+def contract_linear_form(weights: tf.Tensor, x: tf.Tensor) -> tf.Tensor:
+    if tf.rank(weights) == 4:
         return contract_4d(weights, x)
-    elif weights.ndim == 3:
+    elif tf.rank(weights) == 3:
         return contract_3d(weights, x)
-    elif weights.ndim == 2:
+    elif tf.rank(weights) == 2:
         return contract_2d(weights, x)
     else:
         return contract_1d(weights, x)
 
 
-@torch.jit.script
-def symmetric_tensor(weights: Tensor, permutation_group: List[List[int]]):
-    symmetric_weights: Tensor = weights
-
+@tf.function
+def symmetric_tensor(weights: tf.Tensor, permutation_group: List[List[int]]) -> tf.Tensor:
+    symmetric_weights = weights
     for sigma in permutation_group:
-        symmetric_weights = symmetric_weights + weights.permute(sigma)
+        symmetric_weights = symmetric_weights + tf.transpose(weights, perm=sigma)
+    return symmetric_weights / (len(permutation_group) + 1)
 
-    return symmetric_weights / torch.scalar_tensor(len(permutation_group) + 1)
 
-
-# A dynamically created symmetric tensor function.
-# This is necessary for onnx export since it currently does not
-# support tensor.permute with non-constant arguments.
 def create_symmetric_function(permutation_group: List[List[int]]):
     code = [
         "def symmetrize_tensor(weights):",
@@ -72,7 +65,7 @@ def create_symmetric_function(permutation_group: List[List[int]]):
     ]
 
     for sigma in permutation_group:
-        code.append(f"    symmetric_weights = symmetric_weights + weights.permute({','.join(map(str, sigma))})")
+        code.append(f"    symmetric_weights = symmetric_weights + tf.transpose(weights, perm={sigma})")
 
     code.append(f"    return symmetric_weights / {len(permutation_group) + 1}")
     code = "\n".join(code)
@@ -83,12 +76,11 @@ def create_symmetric_function(permutation_group: List[List[int]]):
     return environment["symmetrize_tensor"]
 
 
-@torch.jit.script
-def batch_symmetric_tensor(inputs: Tensor, permutation_group: List[List[int]]):
-    symmetric_outputs: Tensor = inputs
-
+@tf.function
+def batch_symmetric_tensor(inputs: tf.Tensor, permutation_group: List[List[int]]) -> tf.Tensor:
+    symmetric_outputs = inputs
     for sigma in permutation_group:
         for i in range(inputs.shape[0]):
-            symmetric_outputs[i] = symmetric_outputs[i] + inputs[i].permute(sigma)
+            symmetric_outputs = tf.tensor_scatter_nd_add(symmetric_outputs, [[i]], [tf.transpose(inputs[i], perm=sigma)])
+    return symmetric_outputs / (len(permutation_group) + 1)
 
-    return symmetric_outputs / torch.scalar_tensor(len(permutation_group) + 1)

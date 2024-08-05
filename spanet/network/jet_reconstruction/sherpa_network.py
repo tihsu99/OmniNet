@@ -22,10 +22,11 @@ class SherpaNetwork(JetReconstructionTraining, JetReconstructionValidation):
             self.sherpa_iteration += 1
             self.client.send_metrics(trial=self.trial,
                                      iteration=self.sherpa_iteration,
-                                     objective=objective.item(),
-                                     context={key: val.item() for key, val in context.items()})
+                                     objective=objective.numpy().item(),
+                                     context={key: val.numpy().item() for key, val in context.items()})
 
     def validation_epoch_end(self, outputs):
         # Optionally use this accuracy score for something like hyperparameter search
         validation_accuracy = sum(x['validation_accuracy'] for x in outputs) / len(outputs)
         self.commit_sherpa(validation_accuracy)
+

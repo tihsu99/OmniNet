@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from torch import Tensor
+import tensorflow as tf
 
 from spanet.dataset.types import Statistics
 
+Tensor = tf.Tensor
 class Regression(ABC):
     @staticmethod
     @abstractmethod

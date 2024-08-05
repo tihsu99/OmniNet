@@ -1,5 +1,5 @@
 from typing import List, Dict, Type, Callable
-from torch import Tensor
+import tensorflow as tf
 
 from spanet.dataset.regressions.base_regression import Regression
 from spanet.dataset.types import Statistics
@@ -7,7 +7,7 @@ from spanet.dataset.regressions.gaussian_regression import GaussianRegression
 from spanet.dataset.regressions.laplacian_regression import LaplacianRegression
 from spanet.dataset.regressions.log_gaussian_regression import LogGaussianRegression
 
-
+Tensor = tf.Tensor
 all_regressions: List[Type[Regression]] = [
     GaussianRegression,
     LaplacianRegression,

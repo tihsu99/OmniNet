@@ -1,61 +1,58 @@
-import torch
-from torch import Tensor
-from torch.nn import functional as F
+import tensorflow as tf
 
-
-@torch.jit.script
-def assignment_cross_entropy_loss(prediction: Tensor, target_data: Tensor, target_mask: Tensor, gamma: float) -> Tensor:
-    batch_size = prediction.shape[0]
-    prediction_shape = prediction.shape[1:]
+@tf.function
+def assignment_cross_entropy_loss(prediction: tf.Tensor, target_data: tf.Tensor, target_mask: tf.Tensor, gamma: float) -> tf.Tensor:
+    batch_size = tf.shape(prediction)[0]
+    prediction_shape = tf.shape(prediction)[1:]
 
     # Remove missing jets
-    target_data = target_data.clamp(0, None)
+    target_data = tf.clip_by_value(target_data, 0, tf.int32.max)
 
     # Find the unravelling shape required to flatten the target indices
-    ravel_sizes = torch.tensor(prediction_shape).flip(0)
-    ravel_sizes = torch.cumprod(ravel_sizes, 0)
-    ravel_sizes = torch.div(ravel_sizes, ravel_sizes[0], rounding_mode='floor')
-    # ravel_sizes = ravel_sizes // ravel_sizes[0]
-    ravel_sizes = ravel_sizes.flip(0).unsqueeze(0)
-    ravel_sizes = ravel_sizes.to(target_data.device)
+    ravel_sizes = tf.math.cumprod(tf.reverse(prediction_shape, axis=[0]))
+    ravel_sizes = ravel_sizes // ravel_sizes[0]
+    ravel_sizes = tf.reverse(ravel_sizes, axis=[0])
+    ravel_sizes = tf.cast(tf.expand_dims(ravel_sizes, 0), tf.int32)
 
     # Flatten the target and predicted data to be one dimensional
-    ravel_target = (target_data * ravel_sizes).sum(1)
-    ravel_prediction = prediction.reshape(batch_size, -1).contiguous()
+    ravel_target = tf.reduce_sum(target_data * ravel_sizes, axis=1)
+    ravel_prediction = tf.reshape(prediction, (batch_size, -1))
 
-    log_probability = ravel_prediction.gather(-1, ravel_target.view(-1, 1)).squeeze()
-    log_probability = log_probability.masked_fill(~target_mask, 0.0)
+    log_probability = tf.gather(ravel_prediction, tf.expand_dims(ravel_target, axis=-1), batch_dims=1)
+    log_probability = tf.squeeze(log_probability, axis=-1)
+    log_probability = tf.where(target_mask, log_probability, tf.zeros_like(log_probability))
 
-    focal_scale = (1 - torch.exp(log_probability)) ** gamma
+    focal_scale = tf.pow(1 - tf.exp(log_probability), gamma)
 
     return -log_probability * focal_scale
 
 
-@torch.jit.script
-def kl_divergence_old(p: Tensor, log_p: Tensor, log_q: Tensor) -> Tensor:
-    sum_dim = [i for i in range(1, p.ndim)]
-    return torch.sum(p * log_p - p * log_q, sum_dim)
+@tf.function
+def kl_divergence_old(p: tf.Tensor, log_p: tf.Tensor, log_q: tf.Tensor) -> tf.Tensor:
+    sum_dim = list(range(1, p.ndim))
+    return tf.reduce_sum(p * log_p - p * log_q, axis=sum_dim)
 
 
-@torch.jit.script
-def kl_divergence(log_prediction: Tensor, log_target: Tensor) -> Tensor:
-    sum_dim = [i for i in range(1, log_prediction.ndim)]
-    return torch.nansum(F.kl_div(log_prediction, log_target, reduction='none', log_target=True), dim=sum_dim)
+@tf.function
+def kl_divergence(log_prediction: tf.Tensor, log_target: tf.Tensor) -> tf.Tensor:
+    sum_dim = list(range(1, log_prediction.ndim))
+    return tf.reduce_sum(tf.keras.losses.KLDivergence(reduction=tf.keras.losses.Reduction.NONE)(log_target, log_prediction), axis=sum_dim)
 
 
-@torch.jit.script
-def jensen_shannon_divergence(log_p: Tensor, log_q: Tensor) -> Tensor:
-    sum_dim = [i for i in range(1, log_p.ndim)]
+@tf.function
+def jensen_shannon_divergence(log_p: tf.Tensor, log_q: tf.Tensor) -> tf.Tensor:
+    sum_dim = list(range(1, log_p.ndim))
 
     # log_m = log( (exp(log_p) + exp(log_q)) / 2 )
-    log_m = torch.logsumexp(torch.stack((log_p, log_q)), dim=0) - 0.69314718056
+    log_m = tf.reduce_logsumexp(tf.stack([log_p, log_q], axis=0), axis=0) - tf.math.log(2.0)
 
     # TODO play around with gradient
-    # log_m = log_m.detach()
-    log_p = log_p.detach()
-    log_q = log_q.detach()
+    # log_m = tf.stop_gradient(log_m)
+    log_p = tf.stop_gradient(log_p)
+    log_q = tf.stop_gradient(log_q)
 
-    kl_p = F.kl_div(log_m, log_p, reduction='none', log_target=True)
-    kl_q = F.kl_div(log_m, log_q, reduction='none', log_target=True)
+    kl_p = tf.keras.losses.KLDivergence(reduction=tf.keras.losses.Reduction.NONE)(log_m, log_p)
+    kl_q = tf.keras.losses.KLDivergence(reduction=tf.keras.losses.Reduction.NONE)(log_m, log_q)
 
-    return torch.nansum(kl_p + kl_q, dim=sum_dim) / 2.0
+    return tf.reduce_sum(kl_p + kl_q, axis=sum_dim) / 2.0
+

@@ -1,12 +1,10 @@
-import torch
-from torch.nn import functional as F
-
+import tensorflow as tf
 
 def masked_log_softmax(
-        vector: torch.Tensor,
-        mask: torch.BoolTensor,
+        vector: tf.Tensor,
+        mask: tf.Tensor,
         dim: int = -1
-) -> torch.Tensor:
+) -> tf.Tensor:
     """
     Another alternative implementation of the masked log-softmax, this time doing a pure
     mask (setting invalid values to -inf) but also preventing any gradient from flowing
@@ -15,18 +13,19 @@ def masked_log_softmax(
 
     if mask is not None:
         # Create a -inf with the correct device and datatype
-        fill_value = torch.log(vector.new_zeros(()))
+        fill_value = tf.math.log(tf.zeros_like(vector))
 
         # Replace all masked entries in the output with the gradient-less -inf
-        vector = torch.masked_fill(vector, ~mask, fill_value)
+        vector = tf.where(mask, vector, fill_value)
 
-    return F.log_softmax(vector, dim=dim)
+    return tf.nn.log_softmax(vector, axis=dim)
 
 
 def masked_softmax(
-        vector: torch.Tensor,
-        mask: torch.BoolTensor,
+        vector: tf.Tensor,
+        mask: tf.Tensor,
         dim: int = -1,
         memory_efficient: bool = False,
-) -> torch.Tensor:
-    return torch.exp(masked_log_softmax(vector, mask, dim))
+) -> tf.Tensor:
+    return tf.exp(masked_log_softmax(vector, mask, dim))
+

@@ -1,41 +1,43 @@
-import torch
-from torch import Tensor
+import tensorflow as tf
 
-from spanet.dataset.regressions.base_regression import Regression, Statistics
+class Statistics:
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
 
-
-class LogGaussianRegression(Regression):
+class LogGaussianRegression:
     @staticmethod
     def name():
         return "log_gaussian"
 
     @staticmethod
-    def signed_log(x: Tensor) -> Tensor:
-        return torch.arcsinh(x / 2.0)
+    def signed_log(x: tf.Tensor) -> tf.Tensor:
+        return tf.asinh(x / 2.0)
 
     @staticmethod
-    def inverse_signed_log(x: Tensor) -> Tensor:
-        return 2.0 * torch.sinh(x)
+    def inverse_signed_log(x: tf.Tensor) -> tf.Tensor:
+        return 2.0 * tf.sinh(x)
 
     @staticmethod
-    def statistics(data: Tensor) -> Statistics:
+    def statistics(data: tf.Tensor) -> Statistics:
         data = LogGaussianRegression.signed_log(data)
 
-        mean = torch.nanmean(data)
-        std = torch.sqrt(torch.nanmean(torch.square(data)) - torch.square(mean))
+        mean = tf.reduce_mean(data, axis=None, keepdims=False)
+        std = tf.sqrt(tf.reduce_mean(tf.square(data), axis=None, keepdims=False) - tf.square(mean))
 
         return Statistics(mean, std)
 
     @staticmethod
-    def loss(predictions: Tensor, targets: Tensor, mean: Tensor, std: Tensor) -> Tensor:
-        return torch.square(predictions - targets)
+    def loss(predictions: tf.Tensor, targets: tf.Tensor, mean: tf.Tensor, std: tf.Tensor) -> tf.Tensor:
+        return tf.square(predictions - targets)
 
     @staticmethod
-    def normalize(data: Tensor, mean: Tensor, std: Tensor) -> Tensor:
+    def normalize(data: tf.Tensor, mean: tf.Tensor, std: tf.Tensor) -> tf.Tensor:
         data = LogGaussianRegression.signed_log(data)
         return (data - mean) / std
 
     @staticmethod
-    def denormalize(data: Tensor, mean: Tensor, std: Tensor) -> Tensor:
+    def denormalize(data: tf.Tensor, mean: tf.Tensor, std: tf.Tensor) -> tf.Tensor:
         data = std * data + mean
         return LogGaussianRegression.inverse_signed_log(data)
+

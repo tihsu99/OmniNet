@@ -6,9 +6,7 @@ import sympy.combinatorics
 from numpy.typing import NDArray, ArrayLike, DTypeLike
 
 import numpy as np
-from torch import Tensor
-from torch.utils._pytree import tree_map, tree_flatten, tree_unflatten
-
+import tensorflow as tf
 
 ODict = OrderedDict
 
@@ -20,7 +18,7 @@ MappedPermutations = List[MappedPermutation]
 
 PermutationGroup = List[List[int]]
 SymbolicPermutationGroup = sympy.combinatorics.PermutationGroup
-
+Tensor = tf.Tensor
 
 class Particles:
     names: Tuple[str, ...]
@@ -46,7 +44,6 @@ class Particles:
     def __getitem__(self, item) -> str:
         return self.names[item]
 
-
 # A 1-2 level dictionary structure for storing info about Feynmen diagrams.
 Key = TypeVar("Key")
 Value = TypeVar("Value")
@@ -63,7 +60,6 @@ ProductDict = ODict
 InputDict = ODict
 
 
-# Similar to `tree_map` but only recurses over dictionaries so we can have lists of data at each node.
 def feynman_map(function: Callable[[Value], NewValue], tree: FeynmanDict[Key, Value]) -> FeynmanDict[Key, NewValue]:
     return {
         key: feynman_map(function, value) if isinstance(value, dict) else function(value)
@@ -111,7 +107,6 @@ class FeatureInfo(NamedTuple):
     normalize: bool
     log_scale: bool
 
-
 ClassificationInfo = str
 
 
@@ -155,7 +150,6 @@ class Batch(NamedTuple):
     regression_targets: Dict[str, Tensor]
     classification_targets: Dict[str, Tensor]
 
-
 class Outputs(NamedTuple):
     assignments: List[Tensor]
     detections: List[Tensor]
@@ -177,5 +171,6 @@ class Evaluation(NamedTuple):
     detection_probabilities: Dict[str, NDArray[np.float32]]
     regressions: Dict[str, NDArray[np.float32]]
     classifications: Dict[str, NDArray[np.float32]]
+
 
 

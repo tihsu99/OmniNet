@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 
 from sympy.combinatorics import Permutation as SymbolicPermutation
 
+
 from spanet.dataset.types import (
     Permutation,
     Permutations,
@@ -17,7 +18,6 @@ RawPermutation = Union[
     List[List[str]],  # Explicit
     List[str]  # Complete Group
 ]
-
 
 def expand_permutation(permutation: RawPermutation) -> Permutation:
     if isinstance(permutation[0], list):
@@ -34,7 +34,6 @@ def expand_permutations(permutations: List[RawPermutation]) -> Permutations:
         else:
             expanded_permutations.extend([[tuple(p)] for p in combinations(permutation, 2)])
     return expanded_permutations
-
 
 def power_set(iterable):
     s = list(iterable)
@@ -76,3 +75,5 @@ def complete_symbolic_symmetry_group(degree: int, permutations: MappedPermutatio
 def complete_symmetry_group(degree: int, permutations: MappedPermutations) -> PermutationGroup:
     permutations = complete_indices(degree, permutations)
     return symmetry_group(permutations)
+
+

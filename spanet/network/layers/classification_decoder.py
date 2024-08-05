@@ -1,16 +1,15 @@
 from typing import Dict, List
 from collections import OrderedDict
 
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.layers.branch_linear import MultiOutputBranchLinear, BranchLinear
 from spanet.dataset.jet_reconstruction_dataset import JetReconstructionDataset
 
 
-class ClassificationDecoder(nn.Module):
-    __constants__ = ['hidden_dim', 'num_layers']
-
+class ClassificationDecoder(tf.keras.layers.Layer):
     def __init__(self, options: Options, training_dataset: JetReconstructionDataset):
         super(ClassificationDecoder, self).__init__()
 
@@ -29,15 +28,16 @@ class ClassificationDecoder(nn.Module):
                 counts[name]
             )
 
+            # If you need to use MultiOutputBranchLinear, uncomment the following:
             # networks[name] = MultiOutputBranchLinear(
             #     options,
             #     options.num_classification_layers,
             #     counts[name]
             # )
 
-        self.networks = nn.ModuleDict(networks)
+        self.networks = {name: network for name, network in networks.items()}
 
-    def forward(self, vectors: Dict[str, Tensor]) -> Dict[str, List[Tensor]]:
+    def call(self, vectors: Dict[str, tf.Tensor]) -> Dict[str, List[tf.Tensor]]:
         # vectors: Dict with mapping name -> [B, D]
         # outputs: Dict with mapping name -> [B, O_name]
 
@@ -45,3 +45,6 @@ class ClassificationDecoder(nn.Module):
             key: network(vectors['/'.join(key.split('/')[:-1])])
             for key, network in self.networks.items()
         }
+
+# Ensure that the BranchLinear and MultiOutputBranchLinear classes are translated to TensorFlow as well.
+

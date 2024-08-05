@@ -2,6 +2,10 @@ from configparser import ConfigParser
 from collections import OrderedDict
 from itertools import chain, permutations
 from functools import cache
+from typing import List, Dict, Tuple, Set, Iterable, FrozenSet, Callable
+
+import numpy as np
+import tensorflow as tf
 
 from yaml import load as yaml_load
 
@@ -9,7 +13,6 @@ try:
     from yaml import CLoader as Loader, CDumper as Dumper
 except ImportError:
     from yaml import Loader, Dumper
-import numpy as np
 
 from spanet.dataset.types import *
 from spanet.network.utilities.group_theory import (
@@ -19,14 +22,11 @@ from spanet.network.utilities.group_theory import (
     expand_permutations
 )
 
-
 def cached_property(func):
     return property(cache(func))
 
-
 def with_default(value, default):
     return default if value is None else value
-
 
 def key_with_default(database, key, default):
     if key not in database:
@@ -35,24 +35,16 @@ def key_with_default(database, key, default):
     value = database[key]
     return default if value is None else value
 
-
 class EventInfo:
     def __init__(
         self,
-
-        # Information about observable inputs for this event.
-        input_types: InputDict[str, InputType],
-        input_features: InputDict[str, Tuple[FeatureInfo, ...]],
-
-        # Information about the target structure for this event.
+        input_types: Dict[str, InputType],
+        input_features: Dict[str, Tuple[FeatureInfo, ...]],
         event_particles: Particles,
-        product_particles: EventDict[str, Particles],
-
-        # Information about auxiliary values attached to this event.
-        regressions: FeynmanDict[str, List[RegressionInfo]],
-        classifications: FeynmanDict[str, List[ClassificationInfo]]
+        product_particles: Dict[str, Particles],
+        regressions: Dict[str, List[RegressionInfo]],
+        classifications: Dict[str, List[ClassificationInfo]]
     ):
-
         self.input_types = input_types
         self.input_names = list(input_types.keys())
         self.input_features = input_features
@@ -65,8 +57,8 @@ class EventInfo:
         )
 
         self.product_particles = product_particles
-        self.product_mappings: ODict[str, ODict[str, int]] = OrderedDict()
-        self.product_symmetries: ODict[str, Symmetries] = OrderedDict()
+        self.product_mappings: OrderedDict[str, OrderedDict[str, int]] = OrderedDict()
+        self.product_symmetries: OrderedDict[str, Symmetries] = OrderedDict()
 
         for event_particle, product_particles in self.product_particles.items():
             product_mapping = self.construct_mapping(product_particles)
@@ -80,10 +72,10 @@ class EventInfo:
         self.regressions = regressions
         self.classifications = classifications
 
-    def normalized_features(self, input_name: str) -> NDArray[bool]:
+    def normalized_features(self, input_name: str) -> np.ndarray:
         return np.array([feature.normalize for feature in self.input_features[input_name]])
 
-    def log_features(self, input_name: str) -> NDArray[bool]:
+    def log_features(self, input_name: str) -> np.ndarray:
         return np.array([feature.log_scale for feature in self.input_features[input_name]])
 
     @cached_property
@@ -113,7 +105,7 @@ class EventInfo:
         return set(frozenset(frozenset(g(x) for x in s) for g in group.elements) for s in sets)
 
     @cached_property
-    def product_permutation_groups(self) -> ODict[str, PermutationGroup]:
+    def product_permutation_groups(self) -> OrderedDict[str, PermutationGroup]:
         output = []
 
         for name, (degree, symmetries) in self.product_symmetries.items():
@@ -124,7 +116,7 @@ class EventInfo:
         return OrderedDict(output)
 
     @cached_property
-    def product_symbolic_groups(self) -> ODict[str, SymbolicPermutationGroup]:
+    def product_symbolic_groups(self) -> OrderedDict[str, SymbolicPermutationGroup]:
         output = []
 
         for name, (degree, symmetries) in self.product_symmetries.items():
@@ -145,11 +137,11 @@ class EventInfo:
         return tuple(map(str.strip, list_string.strip("][").strip(")(").split(",")))
 
     @staticmethod
-    def construct_mapping(variables: Iterable[str]) -> ODict[str, int]:
+    def construct_mapping(variables: Iterable[str]) -> OrderedDict[str, int]:
         return OrderedDict(map(reversed, enumerate(variables)))
 
     @staticmethod
-    def apply_mapping(permutations: Permutations, mapping: Dict[str, int]) -> MappedPermutations:
+    def apply_mapping(permutations: List[List[Tuple[str, ...]]], mapping: Dict[str, int]) -> List[List[Tuple[int, ...]]]:
         return [
             [
                 tuple(
@@ -174,7 +166,6 @@ class EventInfo:
         else:
             features_types = OrderedDict([("SOURCE", "sequential")])
 
-        print(features_types)
         source_features = OrderedDict(
             (
                 key,
@@ -206,8 +197,6 @@ class EventInfo:
         with open(filename, 'r') as file:
             config = yaml_load(file, Loader)
 
-        # Extract input feature information.
-        # ----------------------------------
         input_types = OrderedDict()
         input_features = OrderedDict()
 
@@ -222,12 +211,9 @@ class EventInfo:
                         normalize=("normalize" in normalize.lower()) or ("true" in normalize.lower()),
                         log_scale="log" in normalize.lower()
                     )
-
                     for name, normalize in input_information.items()
                 )
 
-        # Extract event and permutation information.
-        # ------------------------------------------
         permutation_config = key_with_default(config, SpecialKey.Permutations, default={})
 
         event_names = tuple(config[SpecialKey.Event].keys())
@@ -260,12 +246,9 @@ class EventInfo:
 
             product_particles[event_particle] = Particles(product_names, product_permutations, product_sources)
 
-        # Extract Regression Information.
-        # -------------------------------
         regressions = key_with_default(config, SpecialKey.Regressions, default={})
         regressions = feynman_fill(regressions, event_particles, product_particles, constructor=list)
 
-        # Fill in any default parameters for regressions such as gaussian type.
         regressions = feynman_map(
             lambda raw_regressions: [
                 RegressionInfo(*(regression if isinstance(regression, list) else [regression]))
@@ -274,8 +257,6 @@ class EventInfo:
             regressions
         )
 
-        # Extract Classification Information.
-        # -----------------------------------
         classifications = key_with_default(config, SpecialKey.Classifications, default={})
         classifications = feynman_fill(classifications, event_particles, product_particles, constructor=list)
 
@@ -287,3 +268,5 @@ class EventInfo:
             regressions,
             classifications
         )
+
+

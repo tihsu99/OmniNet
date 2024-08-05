@@ -1,6 +1,6 @@
 import numpy as np
-import torch
-from torch import nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.dataset.types import Tuple, Outputs, Source, Predictions
@@ -29,20 +29,18 @@ class JetReconstructionNetwork(JetReconstructionBase):
         """
         super(JetReconstructionNetwork, self).__init__(options)
 
-        compile_module = torch.jit.script if torch_script else lambda x: x
-
         self.hidden_dim = options.hidden_dim
 
-        self.embedding = compile_module(MultiInputVectorEmbedding(
+        self.embedding = MultiInputVectorEmbedding(
             options,
             self.training_dataset
-        ))
+        )
 
-        self.encoder = compile_module(JetEncoder(
+        self.encoder = JetEncoder(
             options,
-        ))
+        )
 
-        self.branch_decoders = nn.ModuleList([
+        self.branch_decoders = [
             BranchDecoder(
                 options,
                 event_particle_name,
@@ -52,26 +50,23 @@ class JetReconstructionNetwork(JetReconstructionBase):
             )
             for event_particle_name, product_symmetry
             in self.event_info.product_symmetries.items()
-        ])
+        ]
 
-        self.regression_decoder = compile_module(RegressionDecoder(
+        self.regression_decoder = RegressionDecoder(
             options,
             self.training_dataset
-        ))
+        )
 
-        self.classification_decoder = compile_module(ClassificationDecoder(
+        self.classification_decoder = ClassificationDecoder(
             options,
             self.training_dataset
-        ))
-
-        # An example input for generating the network's graph, batch size of 2
-        # self.example_input_array = tuple(x.contiguous() for x in self.training_dataset[:2][0])
+        )
 
     @property
     def enable_softmax(self):
         return True
 
-    def forward(self, sources: Tuple[Source, ...]) -> Outputs:
+    def call(self, sources: Tuple[Source, ...]) -> Outputs:
         # Embed all of the different input regression_vectors into the same latent space.
         embeddings, padding_masks, sequence_masks, global_masks = self.embedding(sources)
 
@@ -99,7 +94,7 @@ class JetReconstructionNetwork(JetReconstructionBase):
             assignments.append(assignment)
             detections.append(detection)
 
-            # Assign the summarising vectors to their correct structure.
+            # Assign the summarizing vectors to their correct structure.
             encoded_vectors["/".join([decoder.particle_name, "PARTICLE"])] = event_particle_vector
             for product_name, product_vector in zip(decoder.product_names, product_particle_vectors):
                 encoded_vectors["/".join([decoder.particle_name, product_name])] = product_vector
@@ -119,31 +114,30 @@ class JetReconstructionNetwork(JetReconstructionBase):
         )
 
     def predict(self, sources: Tuple[Source, ...]) -> Predictions:
-        with torch.no_grad():
-            outputs = self.forward(sources)
+        outputs = self(sources)
 
-            # Extract assignment probabilities and find the least conflicting assignment.
-            assignments = extract_predictions([
-                np.nan_to_num(assignment.detach().cpu().numpy(), -np.inf)
-                for assignment in outputs.assignments
-            ])
+        # Extract assignment probabilities and find the least conflicting assignment.
+        assignments = extract_predictions([
+            np.nan_to_num(assignment.numpy(), -np.inf)
+            for assignment in outputs.assignments
+        ])
 
-            # Convert detection logits into probabilities and move to CPU.
-            detections = np.stack([
-                torch.sigmoid(detection).cpu().numpy()
-                for detection in outputs.detections
-            ])
+        # Convert detection logits into probabilities and move to CPU.
+        detections = np.stack([
+            tf.sigmoid(detection).numpy()
+            for detection in outputs.detections
+        ])
 
-            # Move regressions to CPU and away from torch.
-            regressions = {
-                key: value.cpu().numpy()
-                for key, value in outputs.regressions.items()
-            }
+        # Move regressions to CPU and away from torch.
+        regressions = {
+            key: value.numpy()
+            for key, value in outputs.regressions.items()
+        }
 
-            classifications = {
-                key: value.cpu().argmax(1).numpy()
-                for key, value in outputs.classifications.items()
-            }
+        classifications = {
+            key: tf.argmax(value, axis=1).numpy()
+            for key, value in outputs.classifications.items()
+        }
 
         return Predictions(
             assignments,
@@ -154,11 +148,10 @@ class JetReconstructionNetwork(JetReconstructionBase):
 
     def predict_assignments(self, sources: Tuple[Source, ...]) -> np.ndarray:
         # Run the base prediction step
-        with torch.no_grad():
-            assignments = [
-                np.nan_to_num(assignment.detach().cpu().numpy(), -np.inf)
-                for assignment in self.forward(sources).assignments
-            ]
+        assignments = [
+            np.nan_to_num(assignment.numpy(), -np.inf)
+            for assignment in self(sources).assignments
+        ]
 
         # Find the optimal selection of jets from the output distributions.
         return extract_predictions(assignments)
@@ -171,3 +164,4 @@ class JetReconstructionNetwork(JetReconstructionBase):
             detections += 1
 
         return assignments, detections >= 0.5
+

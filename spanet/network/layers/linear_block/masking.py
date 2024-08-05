@@ -1,27 +1,23 @@
-import torch
-from torch import nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 
-# noinspection PyMethodMayBeStatic
-class IdentityMasking(nn.Module):
-    def forward(self, values, sequence_mask):
+class IdentityMasking(tf.keras.layers.Layer):
+    def call(self, values, sequence_mask):
         return values
 
 
-# noinspection PyMethodMayBeStatic
-class MultiplicativeMasking(nn.Module):
-    def forward(self, values, sequence_mask):
-        return values * sequence_mask.to(values.dtype)
+class MultiplicativeMasking(tf.keras.layers.Layer):
+    def call(self, values, sequence_mask):
+        return values * tf.cast(sequence_mask, values.dtype)
 
 
-# noinspection PyMethodMayBeStatic
-class FillingMasking(nn.Module):
-    def forward(self, values, sequence_mask):
-        return torch.masked_fill(values, ~sequence_mask, 0.0)
+class FillingMasking(tf.keras.layers.Layer):
+    def call(self, values, sequence_mask):
+        return tf.where(tf.logical_not(sequence_mask), tf.zeros_like(values), values)
 
 
-# noinspection SpellCheckingInspection
-def create_masking(masking: str) -> nn.Module:
+def create_masking(masking: str) -> tf.keras.layers.Layer:
     masking = masking.lower().replace("_", "").replace(" ", "")
 
     if masking == "multiplicative":
@@ -30,3 +26,4 @@ def create_masking(masking: str) -> nn.Module:
         return FillingMasking()
     else:
         return IdentityMasking()
+

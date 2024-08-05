@@ -1,18 +1,15 @@
 from argparse import ArgumentParser
 from typing import List
 
-import torch
-from torch.nn import functional as F
-from torch.utils._pytree import tree_map
-
-import pytorch_lightning as pl
+import numpy as np
+import tensorflow as tf
 
 from spanet import JetReconstructionModel
 from spanet.dataset.types import Source
 from spanet.evaluation import load_model
 
 
-class WrappedModel(pl.LightningModule):
+class WrappedModel(tf.keras.Model):
     def __init__(
             self,
             model: JetReconstructionModel,
@@ -30,35 +27,35 @@ class WrappedModel(pl.LightningModule):
     def apply_input_log_transform(self, sources):
         new_sources = []
         for (data, mask), name in zip(sources, self.model.event_info.input_names):
-            new_data = torch.stack([
-                mask * torch.log(data[:, :, i] + 1) if log_transformer else data[:, :, i]
+            new_data = tf.stack([
+                mask * tf.math.log(data[:, :, i] + 1) if log_transformer else data[:, :, i]
                 for i, log_transformer in enumerate(self.model.event_info.log_features(name))
             ], -1)
 
             new_sources.append(Source(new_data, mask))
         return new_sources
 
-    def forward(self, sources: List[Source]):
+    def call(self, sources: List[Source]):
         if self.input_log_transform:
             sources = self.apply_input_log_transform(sources)
 
         outputs = self.model(sources)
 
         if self.output_log_transform:
-            assignments = [assignment for assignment in outputs.assignments]
-            detections = [F.logsigmoid(detection) for detection in outputs.detections]
+            assignments = [tf.math.log(assignment) for assignment in outputs.assignments]
+            detections = [tf.math.log(tf.sigmoid(detection)) for detection in outputs.detections]
 
             classifications = [
-                F.log_softmax(outputs.classifications[key], dim=-1)
+                tf.nn.log_softmax(outputs.classifications[key], axis=-1)
                 for key in self.model.training_dataset.classifications.keys()
             ]
 
         else:
-            assignments = [assignment.exp() for assignment in outputs.assignments]
-            detections = [torch.sigmoid(detection) for detection in outputs.detections]
+            assignments = [tf.exp(assignment) for assignment in outputs.assignments]
+            detections = [tf.sigmoid(detection) for detection in outputs.detections]
 
             classifications = [
-                F.softmax(outputs.classifications[key], dim=-1)
+                tf.nn.softmax(outputs.classifications[key], axis=-1)
                 for key in self.model.training_dataset.classifications.keys()
             ]
 
@@ -69,7 +66,7 @@ class WrappedModel(pl.LightningModule):
 
         embedding_vectors = list(outputs.vectors.values()) if self.output_embeddings else []
 
-        return *assignments, *detections, *regressions, *classifications, *embedding_vectors
+        return assignments + detections + regressions + classifications + embedding_vectors
 
 
 def onnx_specification(model, output_log_transform: bool = False, output_embeddings: bool = False):
@@ -126,25 +123,21 @@ def main(
         gpu: bool,
         opset: int
 ):
-    major_version, minor_version, *_ = torch.__version__.split(".")
+    major_version, minor_version, *_ = tf.__version__.split(".")
     if int(major_version) == 2 and int(minor_version) == 0:
-        raise RuntimeError("ONNX export with Torch 2.0.x is not working. Either install 2.1 or 1.13.")
+        raise RuntimeError("ONNX export with TensorFlow 2.0.x is not working. Either install 2.1 or later.")
 
     model = load_model(log_directory, cuda=gpu)
 
-    # Create wrapped model with flat inputs and outputs
     wrapped_model = WrappedModel(model, input_log_transform, output_log_transform, output_embeddings)
-    wrapped_model.to(model.device)
-    wrapped_model.eval()
-    for parameter in wrapped_model.parameters():
-        parameter.requires_grad_(False)
+    wrapped_model.compile(run_eagerly=True)
 
     input_names, output_names, dynamic_axes = onnx_specification(model, output_log_transform, output_embeddings)
 
     batch = next(iter(model.train_dataloader()))
     sources = batch.sources
     if gpu:
-        sources = tree_map(lambda x: x.cuda(), batch.sources)
+        sources = tree_map(lambda x: x.gpu(), batch.sources)
     sources = tree_map(lambda x: x[:1], sources)
 
     print("-" * 60)
@@ -152,21 +145,16 @@ def main(
     if not input_log_transform:
         print("WARNING -- No input log transform! User must apply log transform manually. -- WARNING")
     print("-" * 60)
-    
-    wrapped_model.to_onnx(
-        output_file,
-        sources,
-        input_names=input_names,
-        output_names=output_names,
-        dynamic_axes=dynamic_axes,
-        opset_version=opset
-    )
+
+    tf.saved_model.save(wrapped_model, "tmp_model")
+    import tf2onnx
+    tf2onnx.convert.from_saved_model("tmp_model", output_path=output_file, opset=opset, input_names=input_names, output_names=output_names)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("log_directory", type=str,
-                        help="Pytorch Lightning Log directory containing the checkpoint and options file.")
+                        help="TensorFlow Log directory containing the checkpoint and options file.")
 
     parser.add_argument("output_file", type=str,
                         help="Name to output the ONNX model to.")
@@ -187,4 +175,5 @@ if __name__ == '__main__':
                         help="Exported model will also output the embeddings for every part of the event.")
 
     arguments = parser.parse_args()
-    main(**arguments.__dict__)
+    main(**vars(arguments))
+

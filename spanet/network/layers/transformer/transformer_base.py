@@ -1,11 +1,9 @@
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 
-
-class TransformerBase(nn.Module):
-    __constants__ = ["num_layers", "hidden_dim", "num_heads", "dim_feedforward", "dropout", "transformer_activation"]
-
+class TransformerBase(tf.keras.layers.Layer):
     def __init__(self, options: Options, num_layers: int):
         super(TransformerBase, self).__init__()
 
@@ -17,5 +15,6 @@ class TransformerBase(nn.Module):
         self.transformer_activation = options.transformer_activation
         self.dim_feedforward = int(round(options.transformer_dim_scale * options.hidden_dim))
 
-    def forward(self, x: Tensor, padding_mask: Tensor, sequence_mask: Tensor) -> Tensor:
+    def call(self, x: tf.Tensor, padding_mask: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
         return x
+

@@ -3,9 +3,8 @@ from typing import List, Tuple
 from opt_einsum import contract_expression
 
 import numpy as np
-
-import torch
-from torch import Tensor, nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.network.symmetric_attention.symmetric_attention_base import SymmetricAttentionBase
 from spanet.network.utilities.linear_form import contract_linear_form, symmetric_tensor
@@ -27,7 +26,13 @@ class SymmetricAttentionFull(SymmetricAttentionBase):
         )
 
         self.weights_shape = [self.features] * degree
-        self.weights = nn.Parameter(torch.randn(*self.weights_shape))
+
+        self.weights = tf.Variable(
+            initial_value=tf.random.normal(self.weights_shape),
+            trainable=True,
+            dtype=tf.float32,
+            name='weights'
+        )
 
         self.output_operation = self.make_contraction()
 
@@ -50,12 +55,11 @@ class SymmetricAttentionFull(SymmetricAttentionBase):
         return contract_expression(expression, *shapes, optimize='optimal')
 
     def reset_parameters(self) -> None:
-        # bound = 1 / math.sqrt(self.weights.shape[1])
-        # nn.init.uniform_(self.weights, -bound, bound)
-        nn.init.xavier_uniform_(self.weights)
+        # Using Xavier uniform initializer to initialize weights
+        initializer = tf.keras.initializers.GlorotUniform()
+        self.weights.assign(initializer(self.weights.shape))
 
-    # noinspection PyUnusedLocal
-    def forward(self, x: Tensor, padding_mask: Tensor, sequence_mask: Tensor) -> Tensor:
+    def call(self, x: tf.Tensor, padding_mask: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
         """ Perform symmetric attention on the hidden vectors and produce the output logits.
 
         This is the full version which creates the N^D tensor and perfoms a general linear form calculation.
@@ -75,20 +79,15 @@ class SymmetricAttentionFull(SymmetricAttentionBase):
             Prediction logits for this particle.
         """
 
-        x = x.transpose(0, 1)
+        x = tf.transpose(x, perm=[1, 0, 2])
 
         # Enforce that symmetries of the particle permutation group
-        # symmetric_weights: [D, D, ...] Symmetric layer weights
         symmetric_weights = symmetric_tensor(self.weights, self.no_identity_permutations)
-        # symmetric_weights = symmetric_weights / self.weights_scale
 
-        # symmetric_weights = symmetric_weights ** (1 / self.order)
         # Perform the generalized matrix multiplication operation.
-        # output: [B, T, T, ...] Symmetric output distribution
-        # output_operands = [x] * self.order + [symmetric_weights]
-        # output = self.output_operation(*output_operands, backend='torch')
         output = contract_linear_form(symmetric_weights, x)
 
         output = symmetric_tensor(output, self.batch_no_identity_permutations)
 
         return output
+

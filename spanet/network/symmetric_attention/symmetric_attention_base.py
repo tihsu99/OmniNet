@@ -1,14 +1,14 @@
 from typing import List, Tuple
 
-import torch
-from torch import nn
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.utilities.group_theory import complete_indices, symmetry_group
 
 
 # noinspection SpellCheckingInspection
-class SymmetricAttentionBase(nn.Module):
+class SymmetricAttentionBase(tf.keras.Model):
     WEIGHTS_INDEX_NAMES = "ijklmn"
     INPUT_INDEX_NAMES = "xyzwuv"
     DEFAULT_JET_COUNT = 16
@@ -34,5 +34,5 @@ class SymmetricAttentionBase(nn.Module):
         self.permutation_group = symmetry_group(self.permutation_indices)
         self.no_identity_permutations = [p for p in self.permutation_group if sorted(p) != p]
         self.batch_no_identity_permutations = [(0,) + tuple(e + 1 for e in p) for p in self.no_identity_permutations]
+        self.weights_scale = tf.math.sqrt(tf.constant(self.features, dtype=tf.float32)) ** self.degree
 
-        self.weights_scale = torch.sqrt(torch.scalar_tensor(self.features)) ** self.degree

@@ -4,22 +4,10 @@ from os import getcwd, makedirs, environ
 import shutil
 import json
 
-import torch
-import pytorch_lightning as pl
-from pytorch_lightning.profilers import PyTorchProfiler
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks.progress.rich_progress import _RICH_AVAILABLE
-from pytorch_lightning.loggers.wandb import _WANDB_AVAILABLE, WandbLogger
-
-from pytorch_lightning.callbacks import (
-    LearningRateMonitor,
-    ModelCheckpoint,
-    RichProgressBar,
-    RichModelSummary,
-    DeviceStatsMonitor,
-    ModelSummary,
-    TQDMProgressBar
-)
+import tensorflow as tf
+import wandb
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler, TensorBoard
+from tensorflow.keras.mixed_precision import set_global_policy, Policy
 
 from spanet import JetReconstructionModel, Options
 
@@ -50,23 +38,16 @@ def main(
         random_seed: int,
     ):
 
-    # Whether or not this script version is the master run or a worker
     master = True
     if "NODE_RANK" in environ:
         master = False
 
-    # -------------------------------------------------------------------------------------------------------
-    # Create options file and load any optional extra information.
-    # -------------------------------------------------------------------------------------------------------
     options = Options(event_file, training_file, validation_file)
 
     if options_file is not None:
         with open(options_file, 'r') as json_file:
             options.update_options(json.load(json_file))
 
-    # -------------------------------------------------------------------------------------------------------
-    # Command line overrides for common option values.
-    # -------------------------------------------------------------------------------------------------------
     options.verbose_output = verbose
     if master and verbose:
         print(f"Verbose output activated.")
@@ -100,92 +81,67 @@ def main(
     if random_seed > 0:
         options.dataset_randomization = random_seed
 
-    # -------------------------------------------------------------------------------------------------------
-    # Print the full hyperparameter list
-    # -------------------------------------------------------------------------------------------------------
     if master:
         options.display()
 
-    # -------------------------------------------------------------------------------------------------------
-    # Begin the training loop
-    # -------------------------------------------------------------------------------------------------------
-
-    # Create the initial model on the CPU
-    model = JetReconstructionModel(options, torch_script)
+    model = JetReconstructionModel(options)
 
     if state_dict is not None:
         if master:
             print(f"Loading state dict from: {state_dict}")
 
-        state_dict = torch.load(state_dict, map_location="cpu")["state_dict"]
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-
-        if master:
-            print(f"Missing Keys: {missing_keys}")
-            print(f"Unexpected Keys: {unexpected_keys}")
+        state_dict = tf.saved_model.load(state_dict)
+        model.load_weights(state_dict)
 
         if freeze_state_dict:
-            for pname, parameter in model.named_parameters():
-                if pname in state_dict:
-                    parameter.requires_grad_(False)
+            for layer in model.layers:
+                layer.trainable = False
 
-    # Construct the logger for this training run. Logs will be saved in {logdir}/{name}/version_i
     log_dir = getcwd() if log_dir is None else log_dir
-    logger = (
-        WandbLogger(name=name, save_dir=log_dir)
-        if _WANDB_AVAILABLE else
-        TensorBoardLogger(save_dir=log_dir, name=name)
-    )
+    logger = wandb.init(project=name, dir=log_dir) if wandb else TensorBoard(log_dir=log_dir, name=name)
 
-    # Create the checkpoint for this training run. We will save the best validation networks based on 'accuracy'
     callbacks = [
         ModelCheckpoint(
-            verbose=options.verbose_output,
-            monitor='validation_accuracy',
-            save_top_k=3,
-            mode='max',
-            save_last=True
+            filepath=log_dir,
+            monitor='val_accuracy',
+            save_best_only=True,
+            save_weights_only=True,
+            verbose=1
         ),
-        LearningRateMonitor(),
-        DeviceStatsMonitor(),
-        RichProgressBar() if _RICH_AVAILABLE else TQDMProgressBar(),
-        RichModelSummary(max_depth=1) if _RICH_AVAILABLE else ModelSummary(max_depth=1)
+        LearningRateScheduler(schedule=lambda epoch: 1e-4 * (0.1 ** int(epoch / 10))),
+        TensorBoard(log_dir=log_dir, update_freq='epoch')
     ]
 
-    epochs = options.epochs
-    profiler = None
     if profile:
-        epochs = 1
-        profiler = PyTorchProfiler(emit_nvtx=True)
+        callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=log_dir, profile_batch='500,520'))
 
-    # Create the final pytorch-lightning manager
-    trainer = pl.Trainer(
-        accelerator="gpu" if options.num_gpu > 0 else "auto",
-        devices=options.num_gpu if options.num_gpu > 0 else "auto",
-        strategy="ddp" if options.num_gpu > 1 else "auto",
-        precision="16-mixed" if fp16 else "32-true",
+    if fp16:
+        set_global_policy(Policy('mixed_float16'))
 
-        gradient_clip_val=options.gradient_clip if options.gradient_clip > 0 else None,
-        max_epochs=epochs,
-        max_time=time_limit,
+    strategy = tf.distribute.MirroredStrategy(devices=[f"/gpu:{i}" for i in range(gpus)]) if gpus else tf.distribute.get_strategy()
 
-        logger=logger,
-        profiler=profiler,
-        callbacks=callbacks
-    )
+    with strategy.scope():
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
 
-    # Save the current hyperparameters to a json file in the checkpoint directory
-    if master:
-        print(f"Training Version {trainer.logger.version}")
-        makedirs(trainer.logger.log_dir, exist_ok=True)
+        if checkpoint:
+            model.load_weights(checkpoint)
 
-        with open(f"{trainer.logger.log_dir}/options.json", 'w') as json_file:
+        makedirs(logger.log_dir, exist_ok=True)
+        with open(f"{logger.log_dir}/options.json", 'w') as json_file:
             json.dump(options.__dict__, json_file, indent=4)
+        shutil.copy2(options.event_info_file, f"{logger.log_dir}/event.yaml")
 
-        shutil.copy2(options.event_info_file, f"{trainer.logger.log_dir}/event.yaml")
-
-    trainer.fit(model, ckpt_path=checkpoint)
-    # -------------------------------------------------------------------------------------------------------
+        model.fit(
+            model.train_dataloader(),
+            validation_data=model.val_dataloader(),
+            epochs=epochs,
+            callbacks=callbacks,
+            verbose=1
+        )
 
 
 if __name__ == '__main__':
@@ -240,7 +196,7 @@ if __name__ == '__main__':
                         help="Limit dataset to only the first L percent of the data (0 - 100).")
 
     parser.add_argument("-fp16", "--fp16", action="store_true",
-                        help="Use Torch AMP for training.")
+                        help="Use TensorFlow mixed precision for training.")
 
     parser.add_argument("-v", "--verbose", action='store_true',
                         help="Output additional information to console and log.")
@@ -249,9 +205,10 @@ if __name__ == '__main__':
                         help="Set random seed for cross-validation.")
 
     parser.add_argument("-ts", "--torch_script", action='store_true',
-                        help="Compile the neural network using torchscript.")
+                        help="Compile the neural network using TensorFlow function compilation.")
 
     parser.add_argument("--profile", action='store_true',
                         help="Profile network for a single training epoch.")
 
     main(**parser.parse_args().__dict__)
+

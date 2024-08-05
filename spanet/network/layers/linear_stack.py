@@ -1,19 +1,18 @@
-from torch import nn, Tensor
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.network.layers.linear_block import create_linear_block
 
 
-class LinearStack(nn.Module):
+class LinearStack(tf.keras.layers.Layer):
     def __init__(self, options: Options, num_layers: int, hidden_dim: int, skip_connection: bool = True):
         super(LinearStack, self).__init__()
 
-        self.layers = nn.ModuleList([
-            create_linear_block(options, hidden_dim, hidden_dim, skip_connection)
-            for _ in range(num_layers)
-        ])
+        self.layers = [create_linear_block(options, hidden_dim, hidden_dim, skip_connection)
+                       for _ in range(num_layers)]
 
-    def forward(self, x: Tensor, sequence_mask: Tensor) -> Tensor:
+    def call(self, x: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
         """ A stack of identically structured linear blocks in sequential order.
 
         Parameters
@@ -36,9 +35,8 @@ class LinearStack(nn.Module):
         return output
 
 
-# noinspection PyUnusedLocal, PyMethodMayBeStatic
-class LinearIdentity(nn.Module):
-    def forward(self, x: Tensor, sequence_mask: Tensor) -> Tensor:
+class LinearIdentity(tf.keras.layers.Layer):
+    def call(self, x: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
         return x
 
 
@@ -47,8 +45,9 @@ def create_linear_stack(
         num_layers: int,
         hidden_dim: int,
         skip_connection: bool = False
-):
+) -> tf.keras.layers.Layer:
     if num_layers > 0:
         return LinearStack(options, num_layers, hidden_dim, skip_connection)
     else:
         return LinearIdentity()
+

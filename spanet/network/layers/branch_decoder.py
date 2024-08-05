@@ -1,8 +1,8 @@
 from typing import Tuple, List
 from opt_einsum import contract_expression
 
-import torch
-from torch import Tensor, nn, jit
+import tensorflow as tf
+from tensorflow.keras import layers
 
 from spanet.options import Options
 from spanet.dataset.types import Symmetries
@@ -12,7 +12,7 @@ from spanet.network.layers.branch_linear import BranchLinear
 from spanet.network.symmetric_attention import SymmetricAttentionSplit, SymmetricAttentionFull
 
 
-class BranchDecoder(nn.Module):
+class BranchDecoder(tf.keras.layers.Layer):
     # noinspection SpellCheckingInspection
     WEIGHTS_INDEX_NAMES = "ijklmn"
     DEFAULT_JET_COUNT = 16
@@ -66,42 +66,41 @@ class BranchDecoder(nn.Module):
         expression = f"{operands}->{weights_index_names}"
         return expression
 
-    def create_output_mask(self, output: Tensor, sequence_mask: Tensor) -> Tensor:
-        num_jets = output.shape[1]
+    def create_output_mask(self, output: tf.Tensor, sequence_mask: tf.Tensor) -> tf.Tensor:
+        num_jets = tf.shape(output)[1]
 
         # batch_sequence_mask: [B, T, 1] Positive mask indicating jet is real.
-        batch_sequence_mask = sequence_mask.transpose(0, 1).contiguous()
+        batch_sequence_mask = tf.transpose(sequence_mask, perm=[1, 0, 2])
 
         # =========================================================================================
         # Padding mask
         # =========================================================================================
-        padding_mask_operands = [batch_sequence_mask.squeeze(-1) * 1] * self.degree
-        padding_mask = torch.einsum(self.padding_mask_operation, *padding_mask_operands)
-        padding_mask = padding_mask.bool()
+        padding_mask_operands = [tf.squeeze(batch_sequence_mask, axis=-1)] * self.degree
+        padding_mask = tf.einsum(self.padding_mask_operation, *padding_mask_operands)
+        padding_mask = tf.cast(padding_mask, dtype=tf.bool)
 
         # =========================================================================================
         # Diagonal mask
         # =========================================================================================
         try:
-            diagonal_mask = self.diagonal_masks[(num_jets, output.device)]
+            diagonal_mask = self.diagonal_masks[(num_jets.numpy(), output.device)]
         except KeyError:
-            identity = 1 - torch.eye(num_jets)
-            identity = identity.type_as(output)
+            identity = 1 - tf.eye(num_jets, dtype=output.dtype)
 
-            diagonal_mask_operands = [identity * 1] * self.degree
-            diagonal_mask = torch.einsum(self.diagonal_mask_operation, *diagonal_mask_operands)
-            diagonal_mask = diagonal_mask.unsqueeze(0) < (num_jets + 1 - self.degree)
-            self.diagonal_masks[(num_jets, output.device)] = diagonal_mask
+            diagonal_mask_operands = [identity] * self.degree
+            diagonal_mask = tf.einsum(self.diagonal_mask_operation, *diagonal_mask_operands)
+            diagonal_mask = tf.expand_dims(diagonal_mask, axis=0) < (num_jets + 1 - self.degree)
+            self.diagonal_masks[(num_jets.numpy(), output.device)] = diagonal_mask
 
-        return (padding_mask & diagonal_mask).bool()
+        return tf.logical_and(padding_mask, diagonal_mask)
 
-    def forward(
+    def call(
             self,
-            event_vectors: Tensor,
-            padding_mask: Tensor,
-            sequence_mask: Tensor,
-            global_mask: Tensor,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+            event_vectors: tf.Tensor,
+            padding_mask: tf.Tensor,
+            sequence_mask: tf.Tensor,
+            global_mask: tf.Tensor,
+    ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
         """ Create a distribution over jets for a given particle and a probability of its existence.
 
         Parameters
@@ -131,7 +130,7 @@ class BranchDecoder(nn.Module):
         # Run the encoded vectors through the classifier.
         # detection: [B, 1]
         # -----------------------------------------------
-        detection = self.detection_classifier(particle_vector).squeeze(-1)
+        detection = tf.squeeze(self.detection_classifier(particle_vector), axis=-1)
 
         # --------------------------------------------------------
         # Extract sequential vectors only for the assignment step.
@@ -139,9 +138,9 @@ class BranchDecoder(nn.Module):
         # sequential_padding_mask : [B, TS]
         # sequential_sequence_mask : [TS, B, 1]
         # --------------------------------------------------------
-        sequential_particle_vectors = encoded_vectors[global_mask].contiguous()
-        sequential_padding_mask = padding_mask[:, global_mask].contiguous()
-        sequential_sequence_mask = sequence_mask[global_mask].contiguous()
+        sequential_particle_vectors = tf.boolean_mask(encoded_vectors, global_mask)
+        sequential_padding_mask = tf.boolean_mask(padding_mask, global_mask, axis=1)
+        sequential_sequence_mask = tf.boolean_mask(sequence_mask, global_mask)
 
         # --------------------------------------------------------------------
         # Create the vector distribution logits and the correctly shaped mask.
@@ -164,17 +163,14 @@ class BranchDecoder(nn.Module):
         # mask : [TS, TS, ...]
         # ---------------------------------------------------------------------------
         if self.softmax_output:
-            original_shape = assignment.shape
+            original_shape = tf.shape(assignment)
             batch_size = original_shape[0]
 
-            assignment = assignment.reshape(batch_size, -1)
-            assignment_mask = assignment_mask.reshape(batch_size, -1)
+            assignment = tf.reshape(assignment, (batch_size, -1))
+            assignment_mask = tf.reshape(assignment_mask, (batch_size, -1))
 
             assignment = masked_log_softmax(assignment, assignment_mask)
-            assignment = assignment.view(*original_shape)
-
-            # mask = mask.view(*original_shape)
-            # offset = torch.log(mask.sum((1, 2, 3), keepdims=True).float()) * self.combinatorial_scale
-            # output = output + offset
+            assignment = tf.reshape(assignment, original_shape)
 
         return assignment, detection, assignment_mask, particle_vector, daughter_vectors
+
