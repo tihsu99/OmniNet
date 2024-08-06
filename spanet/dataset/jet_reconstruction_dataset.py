@@ -31,7 +31,7 @@ TBatch = Tuple[
 ]
 
 
-class JetReconstructionDataset(tf.data.Dataset):
+class JetReconstructionDataset(tf.keras.utils.Sequence):
     def __init__(
         self,
         data_file: str,
