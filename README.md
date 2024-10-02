@@ -1,10 +1,14 @@
-# Symmetry Preserving Attention Networks
+# Event level foundation model.
+
+This work is inspired from [SPANet](https://github.com/Alexanders101/SPANet/tree/v1.0) and [OmniLearn](https://github.com/ViniciusMikuni/OmniLearn) to build a foundation model for event level study.
+
+## Symmetry Preserving Attention Networks
 
 A library for training and evaluation SPANets on jet reconstruction tasks. 
 Originally developed for `ttbar` analysis,
 this library now supports arbitrary event topologies and symmetry groups.
 
-## Version 2 Update
+### Version 2 Update
 
 We recently pushed an updated version 2 of this library which adds several new features.
 1. New configuration file format with more options on inputs and event topology.
@@ -18,8 +22,8 @@ An example demonstrating these new features may be found here: [docs/TTH.md](doc
 You can install this package to use it outside of the repository after cloning.
 
 ```bash
-git clone https://github.com/Alexanders101/SPANet
-cd SPANet
+git clone https://github.com/tihsu99/OmniNet
+cd OmniNet
 pip install .
 ```
 
@@ -82,39 +86,39 @@ the different setup components, or just follow the ttbar example.
 ### Training
 
 Once those steps are complete, you can begin training by 
-calling `spanet.train` with your chosen parameters. For more information
-simply run `python -m spanet.train --help`
+calling `omninet.train` with your chosen parameters. For more information
+simply run `python -m omninet.train --help`
 
 You can experiment with the provided example configuration and dataset
 for some `ttbar` events by calling 
-`python -m spanet.train -of options_files/full_hadronic_ttbar/example.json --gpus NUM_GPUS` 
+`python -m omninet.train -of options_files/full_hadronic_ttbar/example.json --gpus NUM_GPUS` 
 where `NUM_GPUS` is the number of gpus available on your machine.
 
 ### Evaluation
 
 Once training is complete, you may evalute a network on
-a testing dataset by running `spanet.test` with a path to your previously
+a testing dataset by running `omninet.test` with a path to your previously
 trained network and a file on which to evalute on.
 
 For example, after running the previous training run on `ttbar_example`, 
 you can evaluate the network again on the example dataset by running.
-`python -m spanet.test ./spanet_output/version_0 -tf data/full_hadronic_ttbar/example.h5`
+`python -m omninet.test ./omninet_output/version_0 -tf data/full_hadronic_ttbar/example.h5`
 
 Note that the included example file is very small and you will likely not
 see very good performance on it.
 
 ### Exporting
 
-Once you are happy with your model, you can export it to an [ONNX](https://onnxruntime.ai/) file to use in external applications. This can be done by running `spanet.export` with the log directory and the desired output file. For example: `python -m spanet.export ./spanet_output/version_0 spanet.onnx`.
+Once you are happy with your model, you can export it to an [ONNX](https://onnxruntime.ai/) file to use in external applications. This can be done by running `omninet.export` with the log directory and the desired output file. For example: `python -m omninet.export ./omninet_output/version_0 omninet.onnx`.
 
-Note that only the neural network is able to be exported, and this network outputs the full reconstruction distributions for every event. Unfortunately, the reconstruction algorithm defined [here](spanet/network/prediction_selection.py) cannot be exported as part of the ONNX graph. If your target application uses python, then you can simply use SPANet's selection algorithm, but non-python applications must define their own selection algorithm.
+Note that only the neural network is able to be exported, and this network outputs the full reconstruction distributions for every event. Unfortunately, the reconstruction algorithm defined [here](omninet/network/prediction_selection.py) cannot be exported as part of the ONNX graph. If your target application uses python, then you can simply use SPANet's selection algorithm, but non-python applications must define their own selection algorithm.
 
 You may examine all of the inputs and outputs with the following snippet:
 ```python
 import onnxruntime    # to inference ONNX models, we use the ONNX Runtime
 
 session = onnxruntime.InferenceSession(
-    "./spanet.onnx", 
+    "./omninet.onnx", 
     providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
 )
 

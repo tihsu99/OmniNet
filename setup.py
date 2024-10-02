@@ -5,7 +5,7 @@ this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
 setup(
-    name="spanet",
+    name="omninet",
     packages=find_packages(),
     version="2.2.0",
     description="Symmetry Preserving Attention Networks",
